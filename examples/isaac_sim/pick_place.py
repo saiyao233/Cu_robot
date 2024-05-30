@@ -29,6 +29,7 @@ parser.add_argument(
     help="When True, approaches grasp with fixed orientation and motion only along z axis.",
     default=False,
 )
+parser.add_argument("--robot", type=str, default="franka.yml", help="robot configuration to load")
 args = parser.parse_args()
 
 # Third Party
@@ -42,7 +43,7 @@ simulation_app = SimulationApp(
     }
 )
 # Standard Library
-from typing import Optional
+from typing import Optional,Dict,List
 
 # Third Party
 import carb
@@ -56,7 +57,20 @@ from omni.isaac.core.utils.string import find_unique_string_name
 from omni.isaac.core.utils.types import ArticulationAction
 from omni.isaac.core.utils.viewports import set_camera_view
 from omni.isaac.franka import Franka
+from omni.isaac.core.robots.robot import Robot
+from omni.isaac.core.robots.dual_robot import Dual_Robot
 from omni.isaac.core.tasks import MultiPickPlace
+from pxr import UsdPhysics
+ISAAC_SIM_23 = False
+try:
+    # Third Party
+    from omni.isaac.urdf import _urdf  # isaacsim 2022.2
+    # print('isaac sim 2022.2')
+except ImportError:
+    # Third Party
+    from omni.importer.urdf import _urdf  # isaac sim 2023.1
+
+    ISAAC_SIM_23 = True
 
 # CuRobo
 from curobo.geom.sdf.world import CollisionCheckerType
@@ -68,7 +82,10 @@ from curobo.types.math import Pose
 from curobo.types.robot import JointState
 from curobo.types.state import JointState
 from curobo.util.usd_helper import UsdHelper
+from curobo.util.usd_helper import set_prim_transform
+from curobo.util_file import get_assets_path, get_filename, get_path_of_dir, join_path     
 from curobo.util_file import get_robot_configs_path, get_world_configs_path, join_path, load_yaml
+from curobo.util.usd_helper import UsdHelper
 from curobo.wrap.reacher.motion_gen import (
     MotionGen,
     MotionGenConfig,
@@ -105,17 +122,17 @@ class TaskController(BaseController):
         ]
         self.tensor_args=TensorDeviceType()
         self.robot_cfg = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))["robot_cfg"]
-        self.robot_cfg["kinematics"][
-            "base_link"
-        ] = "panda_link0"  # controls which frame the controller is controlling
+        # self.robot_cfg["kinematics"][
+        #     "base_link"
+        # ] = "panda_link0"  # controls which frame the controller is controlling
 
-        self.robot_cfg["kinematics"][
-            "ee_link"
-        ] = "panda_hand"  # controls which frame the controller is controlling
-        # self.robot_cfg["kinematics"]["cspace"]["max_acceleration"] = 10.0 # controls how fast robot moves
-        self.robot_cfg["kinematics"]["extra_collision_spheres"] = {"attached_object": 100}
-        # @self.robot_cfg["kinematics"]["collision_sphere_buffer"] = 0.0
-        self.robot_cfg["kinematics"]["collision_spheres"] = "spheres/franka_collision_mesh.yml"
+        # self.robot_cfg["kinematics"][
+        #     "ee_link"
+        # ] = "panda_hand"  # controls which frame the controller is controlling
+        # # self.robot_cfg["kinematics"]["cspace"]["max_acceleration"] = 10.0 # controls how fast robot moves
+        # self.robot_cfg["kinematics"]["extra_collision_spheres"] = {"attached_object": 100}
+        # # @self.robot_cfg["kinematics"]["collision_sphere_buffer"] = 0.0
+        # self.robot_cfg["kinematics"]["collision_spheres"] = "spheres/franka_collision_mesh.yml"
         world_cfg_table = WorldConfig.from_dict(
             load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
         )
@@ -304,6 +321,7 @@ class PickPlace(MultiPickPlace):
         self,
         name: str = "multi_pick_place",
         offset: Optional[np.ndarray] = None,
+        my_world:World=None,
     ) -> None:
         MultiPickPlace.__init__(
             self,
@@ -324,6 +342,22 @@ class PickPlace(MultiPickPlace):
         self.target_position = None
         self.target_cube = None
         self.cube_in_hand = None
+        self.robot_cfg=self.get_robot_config()
+        self.word_cfg=my_world
+    def get_robot_config(self):
+        robot_cfg = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))["robot_cfg"]
+        # robot_cfg["kinematics"][
+        #     "base_link"
+        # ] = "panda_link0"  # controls which frame the controller is controlling
+
+        # robot_cfg["kinematics"][
+        #     "ee_link"
+        # ] = "panda_hand"  # controls which frame the controller is controlling
+        # # self.robot_cfg["kinematics"]["cspace"]["max_acceleration"] = 10.0 # controls how fast robot moves
+        # robot_cfg["kinematics"]["extra_collision_spheres"] = {"attached_object": 100}
+        # # @self.robot_cfg["kinematics"]["collision_sphere_buffer"] = 0.0
+        # robot_cfg["kinematics"]["collision_spheres"] = "spheres/franka_collision_mesh.yml"
+        return robot_cfg
 
     def reset(self) -> None:
         self.cube_list = self.get_cube_names()
@@ -375,30 +409,108 @@ class PickPlace(MultiPickPlace):
         ]
         self.cube_list.remove(self.target_cube)
 
-    def set_robot(self) -> Franka:
-        franka_prim_path = find_unique_string_name(
-            initial_name="/World/Franka", is_unique_fn=lambda x: not is_prim_path_valid(x)
-        )
-        franka_robot_name = find_unique_string_name(
-            initial_name="my_franka", is_unique_fn=lambda x: not self.scene.object_exists(x)
-        )
-        return Franka(
-            prim_path=franka_prim_path, name=franka_robot_name, end_effector_prim_name="panda_hand"
-        )
+    # def set_robot(self) -> Franka:
+    #     franka_prim_path = find_unique_string_name(
+    #         initial_name="/World/panda", is_unique_fn=lambda x: not is_prim_path_valid(x)
+    #     )
+    #     franka_robot_name = find_unique_string_name(
+    #         initial_name="my_franka", is_unique_fn=lambda x: not self.scene.object_exists(x)
+    #     )
+    #     return Franka(
+    #         prim_path=franka_prim_path, name=franka_robot_name, end_effector_prim_name="panda_hand"
+    #     )
+    def set_robot(self,
+            # robot_config: Dict,
+            # my_world: World,
+            load_from_usd: bool = False,
+            subroot: str = "",
+            robot_name: str = "my_franka",
+            position: np.array = np.array([0, 0, 0])
+            )->Robot:
+            # robot_config=self.robot_cfg
+            my_world=self.word_cfg
+        # robot_path = obot_config["robot_path"]
+            urdf_interface = _urdf.acquire_urdf_interface()
+            import_config = _urdf.ImportConfig()
+            import_config.merge_fixed_joints = False
+            import_config.convex_decomp = False
+            import_config.import_inertia_tensor = True
+            import_config.fix_base = True
+            import_config.make_default_prim = False
+            import_config.self_collision = False
+            import_config.create_physics_scene = True
+            import_config.import_inertia_tensor = False
+            import_config.default_drive_strength = 20000
+            import_config.default_position_drive_damping = 500
+            import_config.default_drive_type = _urdf.UrdfJointTargetType.JOINT_DRIVE_POSITION
+            import_config.distance_scale = 1
+            import_config.density = 0.0
+            asset_path = get_assets_path()
+            if (
+                "external_asset_path" in self.robot_cfg["kinematics"]
+                and self.robot_cfg["kinematics"]["external_asset_path"] is not None
+            ):
+                asset_path = self.robot_cfg["kinematics"]["external_asset_path"]
+            full_path = join_path(asset_path, self.robot_cfg["kinematics"]["urdf_path"])
+            robot_path = get_path_of_dir(full_path)
+            filename = get_filename(full_path)
+            imported_robot = urdf_interface.parse_urdf(robot_path, filename, import_config)
+            dest_path = subroot
+            robot_path = urdf_interface.import_robot(
+                robot_path,
+                filename,
+                imported_robot,
+                import_config,
+                dest_path,
+            )
+
+            base_link_name = self.robot_cfg["kinematics"]["base_link"]
+
+            robot_p = Dual_Robot(
+                prim_path=robot_path + "/" + base_link_name,
+                # prim_path=robot_path,
+                name=robot_name,
+                end_effector_prim_name="panda_hand"
+            )
+
+            robot_prim = robot_p.prim
+            stage = robot_prim.GetStage()
+            linkp = stage.GetPrimAtPath(robot_path)
+            set_prim_transform(linkp, [position[0], position[1], position[2], 1, 0, 0, 0])
+
+            # if False and ISAAC_SIM_23:  # this doesn't work in isaac sim 2023.1.1
+            #     robot_p.set_solver_velocity_iteration_count(0)
+            #     robot_p.set_solver_position_iteration_count(44)
+
+            #     my_world._physics_context.set_solver_type("PGS")
+
+            # if ISAAC_SIM_23:  # fix to load robot correctly in isaac sim 2023.1.1
+            #     linkp = stage.GetPrimAtPath(robot_path + "/" + base_link_name)
+            #     mass = UsdPhysics.MassAPI(linkp)
+            #     mass.GetMassAttr().Set(0)
+            # robot = my_world.scene.add(robot_p)
+            # robot_path = robot.prim_path
+            return robot_p    
+        
 
 def main():
-    robot_prim_path = "/World/Franka/panda_link0"
-    ignore_substring = ["Franka", "TargetCube", "material", "Plane"]
+    robot_prim_path = "/World/panda/panda_link0"
+    ignore_substring = ["panda", "TargetCube", "material", "Plane"]
     my_world = World(stage_units_in_meters=1.0)
     stage = my_world.stage
 
     xform = stage.DefinePrim("/World", "Xform")
     stage.SetDefaultPrim(xform)
     stage.DefinePrim("/curobo", "Xform")
+    # stage.DefinePrim('/World/panda/panda_link0/panda_hand', 'Xform')
+    # yform = stage.DefinePrim('/World/panda/panda_link0/panda_hand', "Xform")
+    # stage.SetDefaultPrim(yform)
     # my_world.stage.SetDefaultPrim(my_world.stage.GetPrimAtPath("/World"))
     stage = my_world.stage
+    usd_help = UsdHelper()
+    usd_help.load_stage(my_world.stage)
     # my_world.scene.add_default_ground_plane()
-    my_task = PickPlace()
+    my_task = PickPlace(my_world=my_world)
     my_world.add_task(my_task)
     my_world.reset()
     
@@ -412,7 +524,7 @@ def main():
     wait_steps = 8
     my_franka.set_solver_velocity_iteration_count(4)
     my_franka.set_solver_position_iteration_count(124)
-    my_world._physics_context.set_solver_type("TGS")
+    my_world._physics_context.set_solver_type("PGS")
     initial_steps = 100
     if True:
         my_franka.enable_gravity()
@@ -432,6 +544,7 @@ def main():
     task_finished = False
     observations = my_world.get_observations()
     my_task.get_pick_position(observations)
+    print(my_task.target_position)
     i=0
     while simulation_app.is_running():
         my_world.step(render=True)  # necessary to visualize changes
@@ -446,41 +559,42 @@ def main():
         step_index = my_world.current_time_step_index
         observations = my_world.get_observations()
         sim_js = my_franka.get_joints_state()
+        print(my_franka.dof_names)
 
-        if my_controller.reached_target(observations):
-            if my_franka.gripper.get_joint_positions()[0] < 0.035:  # reached placing target
-                my_franka.gripper.open()
-                for _ in range(wait_steps):
-                    my_world.step(render=True)
-                my_controller.detach_obj()
-                my_controller.update(
-                    ignore_substring, robot_prim_path
-                )  # update world collision configuration
-                task_finished = my_task.update_task()
-                if task_finished:
-                    print("\nTASK DONE\n")
-                    for _ in range(wait_steps):
-                        my_world.step(render=True)
-                    continue
-                else:
-                    my_task.get_pick_position(observations)
+        # if my_controller.reached_target(observations):
+        #     if my_franka.gripper.get_joint_positions()[0] < 0.035:  # reached placing target
+        #         my_franka.gripper.open()
+        #         for _ in range(wait_steps):
+        #             my_world.step(render=True)
+        #         my_controller.detach_obj()
+        #         my_controller.update(
+        #             ignore_substring, robot_prim_path
+        #         )  # update world collision configuration
+        #         task_finished = my_task.update_task()
+        #         if task_finished:
+        #             print("\nTASK DONE\n")
+        #             for _ in range(wait_steps):
+        #                 my_world.step(render=True)
+        #             continue
+        #         else:
+        #             my_task.get_pick_position(observations)
 
-            else:  # reached picking target
-                my_franka.gripper.close()
-                for _ in range(wait_steps):
-                    my_world.step(render=True)
-                sim_js = my_franka.get_joints_state()
-                my_controller.update(ignore_substring, robot_prim_path)
-                my_controller.attach_obj(sim_js, my_franka.dof_names)
-                my_task.get_place_position(observations)
+        #     else:  # reached picking target
+        #         my_franka.gripper.close()
+        #         for _ in range(wait_steps):
+        #             my_world.step(render=True)
+        #         sim_js = my_franka.get_joints_state()
+        #         my_controller.update(ignore_substring, robot_prim_path)
+        #         my_controller.attach_obj(sim_js, my_franka.dof_names)
+        #         my_task.get_place_position(observations)
 
-        else:  # target position has been set
-            sim_js = my_franka.get_joints_state()
-            art_action = my_controller.forward(sim_js, my_franka.dof_names)
-            if art_action is not None:
-                articulation_controller.apply_action(art_action)
-                # for _ in range(2):
-                #    my_world.step(render=False)
+        # else:  # target position has been set
+        #     sim_js = my_franka.get_joints_state()
+        #     art_action = my_controller.forward(sim_js, my_franka.dof_names)
+        #     if art_action is not None:
+        #         articulation_controller.apply_action(art_action)
+        #         # for _ in range(2):
+        #         #    my_world.step(render=False)
 
     simulation_app.close()
 if __name__=='__main__':

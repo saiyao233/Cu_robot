@@ -481,6 +481,7 @@ class UsdHelper:
             reference_prim = self.stage.GetPrimAtPath(reference_prim_path)
             r_T_w, _ = get_prim_world_pose(self._xform_cache, reference_prim, inverse=True)
         all_items = self.stage.Traverse()
+        # print(all_items)
         for x in all_items:
             if only_paths is not None:
                 if not any([str(x.GetPath()).startswith(k) for k in only_paths]):

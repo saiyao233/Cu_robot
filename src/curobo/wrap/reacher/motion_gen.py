@@ -371,12 +371,13 @@ class MotionGenConfig:
             base_config_data["world_collision_checker_cfg"]["checker_type"] = collision_checker_type
         if not self_collision_check:
             base_config_data["constraint"]["self_collision_cfg"]["weight"] = 0.0
-
+        # gengxin world checker
         if world_coll_checker is None and world_model is not None:
             world_cfg = WorldCollisionConfig.load_from_dict(
                 base_config_data["world_collision_checker_cfg"], world_model, tensor_args
             )
             world_coll_checker = create_collision_checker(world_cfg)
+            print('world_coll_checker',world_coll_checker)
         ik_solver_cfg = IKSolverConfig.load_from_robot_config(
             robot_cfg,
             world_model,
@@ -2258,7 +2259,10 @@ class MotionGen(MotionGenConfig):
         return metrics
 
     def update_world(self, world: WorldConfig):
+        self.clear_world_cache()
+        # print("traj_world", world)
         self.world_coll_checker.load_collision_model(world, fix_cache_reference=self.use_cuda_graph)
+
         self.graph_planner.reset_graph()
         return True
 

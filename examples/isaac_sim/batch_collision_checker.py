@@ -140,6 +140,19 @@ def main():
 
         if step_index < 20:
             continue
+        if step_index == 10 or step_index % 1000 == 0.0:
+            # print("Updating world, reading w.r.t.", robot_prim_path)
+            obstacles = usd_help.get_obstacles_from_stage(
+                # only_paths=[obstacles_path],
+                # reference_prim_path=robot_prim_path,
+                ignore_substring=[
+                    # robot_prim_path,
+                    "/World/target",
+                    "/World/defaultGroundPlane",
+                    "/curobo",
+                ],
+            ).get_collision_check_world()
+            print(len(obstacles.objects))
         sp_buffer = []
         for k in target_list:
             sph_position, _ = k.get_local_pose()

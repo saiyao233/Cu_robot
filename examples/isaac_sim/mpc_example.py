@@ -301,6 +301,7 @@ def main():
                 ],
                 reference_prim_path=robot_prim_path,
             )
+            print(len(obstacles.objects))
             obstacles.add_obstacle(world_cfg_table.cuboid[0])
             mpc.world_coll_checker.load_collision_model(obstacles)
 

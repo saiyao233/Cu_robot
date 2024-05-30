@@ -864,6 +864,7 @@ class WorldConfig(Sequence):
 
     def get_mesh_world(self, merge_meshes: bool = False, process: bool = False):
         if merge_meshes:
+            # print('mmmmmmm')
             return WorldConfig.create_merged_mesh_world(self, process=process)
         else:
             return WorldConfig.create_mesh_world(self, process=process)

@@ -158,7 +158,7 @@ if __name__ == "__main__":
         collision_cache={"obb": n_obstacle_cuboids, "mesh": n_obstacle_mesh},
         velocity_scale=0.75,
         interpolation_dt=0.02,
-        ee_link_name="right_gripper",
+        # ee_link_name="right_gripper",
     )
     motion_gen = MotionGen(motion_gen_config)
     print("warming up..")

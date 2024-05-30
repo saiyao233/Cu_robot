@@ -241,7 +241,6 @@ def main():
                 ]
                 + names,
             ).get_collision_check_world()
-
             motion_gen.update_world(obstacles)
             print("Updated World")
             carb.log_info("Synced CuRobo world from stage.")

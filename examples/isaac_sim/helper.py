@@ -69,7 +69,6 @@ def add_robot_to_scene(
     position: np.array = np.array([0, 0, 0]),
 ):
     urdf_interface = _urdf.acquire_urdf_interface()
-
     import_config = _urdf.ImportConfig()
     import_config.merge_fixed_joints = False
     import_config.convex_decomp = False
@@ -102,7 +101,7 @@ def add_robot_to_scene(
         import_config,
         dest_path,
     )
-
+    # print("Robot path: ", robot_path)
     base_link_name = robot_config["kinematics"]["base_link"]
 
     robot_p = Robot(
@@ -111,6 +110,7 @@ def add_robot_to_scene(
     )
 
     robot_prim = robot_p.prim
+    # print('robot_prim',robot_prim)
     stage = robot_prim.GetStage()
     linkp = stage.GetPrimAtPath(robot_path)
     set_prim_transform(linkp, [position[0], position[1], position[2], 1, 0, 0, 0])

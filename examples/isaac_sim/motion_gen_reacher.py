@@ -186,11 +186,11 @@ def main():
     articulation_controller = None
 
     world_cfg_table = WorldConfig.from_dict(
-        load_yaml(join_path(get_world_configs_path(), "collision_obj.yml"))
+        load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
     )
     world_cfg_table.cuboid[0].pose[2] -= 0.02
     world_cfg1 = WorldConfig.from_dict(
-        load_yaml(join_path(get_world_configs_path(), "collision_obj.yml"))
+        load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
     ).get_mesh_world()
     world_cfg1.mesh[0].name += "_mesh"
     world_cfg1.mesh[0].pose[2] = -10.5
@@ -243,7 +243,7 @@ def main():
     )
 
     usd_help.load_stage(my_world.stage)
-    usd_help.add_world_to_stage(world_cfg_table, base_frame="/World")
+    usd_help.add_world_to_stage(world_cfg, base_frame="/World")
 
     cmd_plan = None
     cmd_idx = 0
