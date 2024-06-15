@@ -122,17 +122,7 @@ class TaskController(BaseController):
         ]
         self.tensor_args=TensorDeviceType()
         self.robot_cfg = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))["robot_cfg"]
-        # self.robot_cfg["kinematics"][
-        #     "base_link"
-        # ] = "panda_link0"  # controls which frame the controller is controlling
 
-        # self.robot_cfg["kinematics"][
-        #     "ee_link"
-        # ] = "panda_hand"  # controls which frame the controller is controlling
-        # # self.robot_cfg["kinematics"]["cspace"]["max_acceleration"] = 10.0 # controls how fast robot moves
-        # self.robot_cfg["kinematics"]["extra_collision_spheres"] = {"attached_object": 100}
-        # # @self.robot_cfg["kinematics"]["collision_sphere_buffer"] = 0.0
-        # self.robot_cfg["kinematics"]["collision_spheres"] = "spheres/franka_collision_mesh.yml"
         world_cfg_table = WorldConfig.from_dict(
             load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
         )
@@ -328,7 +318,7 @@ class PickPlace(MultiPickPlace):
             name=name,
             cube_initial_positions=np.array(
                 [
-                    [0.50, 0.0, 0.1],
+                    # [0.50, 0.0, 0.1],
                     [0.50, -0.5, 0.1],
                 ]
             )
@@ -344,19 +334,10 @@ class PickPlace(MultiPickPlace):
         self.cube_in_hand = None
         self.robot_cfg=self.get_robot_config()
         self.word_cfg=my_world
+        self.place=False
     def get_robot_config(self):
         robot_cfg = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))["robot_cfg"]
-        # robot_cfg["kinematics"][
-        #     "base_link"
-        # ] = "panda_link0"  # controls which frame the controller is controlling
 
-        # robot_cfg["kinematics"][
-        #     "ee_link"
-        # ] = "panda_hand"  # controls which frame the controller is controlling
-        # # self.robot_cfg["kinematics"]["cspace"]["max_acceleration"] = 10.0 # controls how fast robot moves
-        # robot_cfg["kinematics"]["extra_collision_spheres"] = {"attached_object": 100}
-        # # @self.robot_cfg["kinematics"]["collision_sphere_buffer"] = 0.0
-        # robot_cfg["kinematics"]["collision_spheres"] = "spheres/franka_collision_mesh.yml"
         return robot_cfg
 
     def reset(self) -> None:
@@ -364,7 +345,7 @@ class PickPlace(MultiPickPlace):
         self.target_position = None
         self.target_cube = None
         self.cube_in_hand = None
-
+        self.place = False
     def update_task(self) -> bool:
         # after detaching the cube in hand
         assert self.target_cube is not None
@@ -387,21 +368,26 @@ class PickPlace(MultiPickPlace):
     def get_place_position(self, observations: dict) -> None:
         assert self.target_cube is not None
         self.cube_in_hand = self.target_cube
-        self.target_cube = self.cube_list[0]
-        ee_to_grasped_cube = (
-            observations["my_franka"]["end_effector_position"][2]
-            - observations[self.cube_in_hand]["position"][2]
-        )
-        self.target_position = observations[self.target_cube]["position"] + [
-            0,
-            0,
-            self._cube_size[2] + ee_to_grasped_cube + 0.02,
-        ]
-        self.cube_list.remove(self.target_cube)
+        # print('cube_list',self.cube_list)
+        # self.target_cube = self.cube_list[0]
+        # ee_to_grasped_cube = (
+        #     observations["my_franka"]["end_effector_position"][2]
+        #     - observations[self.cube_in_hand]["position"][2]
+        # )
+        # self.target_position = observations[self.target_cube]["position"] + [
+        #     0,
+        #     0,
+        #     self._cube_size[2] + ee_to_grasped_cube + 0.02,
+        # ]
+        self.target_position=np.array([0.3,-0.3,self._cube_size[2] / 2 + 0.192])
+        
+        # self.cube_list.remove(self.target_cube)
 
     def get_pick_position(self, observations: dict) -> None:
+        # make sure that there is no cude in hand
         assert self.cube_in_hand is None
-        self.target_cube = self.cube_list[1]
+        # find targe cube and postion
+        self.target_cube = self.cube_list[-1]
         self.target_position = observations[self.target_cube]["position"] + [
             0,
             0,
@@ -409,16 +395,6 @@ class PickPlace(MultiPickPlace):
         ]
         self.cube_list.remove(self.target_cube)
 
-    # def set_robot(self) -> Franka:
-    #     franka_prim_path = find_unique_string_name(
-    #         initial_name="/World/panda", is_unique_fn=lambda x: not is_prim_path_valid(x)
-    #     )
-    #     franka_robot_name = find_unique_string_name(
-    #         initial_name="my_franka", is_unique_fn=lambda x: not self.scene.object_exists(x)
-    #     )
-    #     return Franka(
-    #         prim_path=franka_prim_path, name=franka_robot_name, end_effector_prim_name="panda_hand"
-    #     )
     def set_robot(self,
             # robot_config: Dict,
             # my_world: World,
@@ -426,7 +402,7 @@ class PickPlace(MultiPickPlace):
             subroot: str = "",
             robot_name: str = "my_franka",
             position: np.array = np.array([0, 0, 0])
-            )->Robot:
+            )->Dual_Robot:
             # robot_config=self.robot_cfg
             my_world=self.word_cfg
         # robot_path = obot_config["robot_path"]
@@ -502,10 +478,7 @@ def main():
     xform = stage.DefinePrim("/World", "Xform")
     stage.SetDefaultPrim(xform)
     stage.DefinePrim("/curobo", "Xform")
-    # stage.DefinePrim('/World/panda/panda_link0/panda_hand', 'Xform')
-    # yform = stage.DefinePrim('/World/panda/panda_link0/panda_hand', "Xform")
-    # stage.SetDefaultPrim(yform)
-    # my_world.stage.SetDefaultPrim(my_world.stage.GetPrimAtPath("/World"))
+
     stage = my_world.stage
     usd_help = UsdHelper()
     usd_help.load_stage(my_world.stage)
@@ -524,27 +497,30 @@ def main():
     wait_steps = 8
     my_franka.set_solver_velocity_iteration_count(4)
     my_franka.set_solver_position_iteration_count(124)
-    my_world._physics_context.set_solver_type("PGS")
+    my_world._physics_context.set_solver_type("TGS")
     initial_steps = 100
-    if True:
-        my_franka.enable_gravity()
-        articulation_controller.set_gains(
-            kps=np.array(
-                [100000000, 6000000.0, 10000000, 600000.0, 25000.0, 15000.0, 50000.0, 6000.0, 6000.0]
-            )
-        )
+    # if True:
+    #     my_franka.enable_gravity()
+    #     articulation_controller.set_gains(
+    #         kps=np.array(
+    #             [100000000, 6000000.0, 10000000, 600000.0, 25000.0, 15000.0, 50000.0, 6000.0, 6000.0]
+    #         )
+    #     )
 
-        articulation_controller.set_max_efforts(
-            values=np.array([100000, 52.199997, 100000, 52.199997, 7.2, 7.2, 7.2, 50.0, 50])
-        )
+    #     articulation_controller.set_max_efforts(
+    #         values=np.array([100000, 52.199997, 100000, 52.199997, 7.2, 7.2, 7.2, 50.0, 50])
+    #     )
     my_franka.gripper.open()
     for _ in range(wait_steps):
         my_world.step(render=True)
+    # complete configeration
+
     my_task.reset()
     task_finished = False
     observations = my_world.get_observations()
+    # 获取目标1的位置
     my_task.get_pick_position(observations)
-    print(my_task.target_position)
+    # print(my_task.target_position)
     i=0
     while simulation_app.is_running():
         my_world.step(render=True)  # necessary to visualize changes
@@ -559,42 +535,50 @@ def main():
         step_index = my_world.current_time_step_index
         observations = my_world.get_observations()
         sim_js = my_franka.get_joints_state()
-        print(my_franka.dof_names)
+        # print(f'target_position:{my_task.target_position}')
+        # print(f'target_cude:{my_task.target_cube}')
+        # print(f'cube_in_hand:{my_task.cube_in_hand}')
+        # print(f'gripper:{my_franka.gripper.get_joint_positions()}')
 
-        # if my_controller.reached_target(observations):
-        #     if my_franka.gripper.get_joint_positions()[0] < 0.035:  # reached placing target
-        #         my_franka.gripper.open()
-        #         for _ in range(wait_steps):
-        #             my_world.step(render=True)
-        #         my_controller.detach_obj()
-        #         my_controller.update(
-        #             ignore_substring, robot_prim_path
-        #         )  # update world collision configuration
-        #         task_finished = my_task.update_task()
-        #         if task_finished:
-        #             print("\nTASK DONE\n")
-        #             for _ in range(wait_steps):
-        #                 my_world.step(render=True)
-        #             continue
-        #         else:
-        #             my_task.get_pick_position(observations)
 
-        #     else:  # reached picking target
-        #         my_franka.gripper.close()
-        #         for _ in range(wait_steps):
-        #             my_world.step(render=True)
-        #         sim_js = my_franka.get_joints_state()
-        #         my_controller.update(ignore_substring, robot_prim_path)
-        #         my_controller.attach_obj(sim_js, my_franka.dof_names)
-        #         my_task.get_place_position(observations)
+        if my_controller.reached_target(observations):
+            print(f'gripper:{my_franka.gripper.get_joint_positions()}')
+            # if my_franka.gripper.get_joint_positions()[0] < 0.035:  # reached placing target
+            if my_controller.my_task.place==True:
+                my_franka.gripper.open()
+                for _ in range(wait_steps):
+                    my_world.step(render=True)
+                my_controller.detach_obj()
+                my_controller.update(
+                    ignore_substring, robot_prim_path
+                )  # update world collision configuration
+                task_finished = my_task.update_task()
+                if task_finished:
+                    print("\nTASK DONE\n")
+                    for _ in range(wait_steps):
+                        my_world.step(render=True)
+                    continue
+                else:
+                    my_task.get_pick_position(observations)
 
-        # else:  # target position has been set
-        #     sim_js = my_franka.get_joints_state()
-        #     art_action = my_controller.forward(sim_js, my_franka.dof_names)
-        #     if art_action is not None:
-        #         articulation_controller.apply_action(art_action)
-        #         # for _ in range(2):
-        #         #    my_world.step(render=False)
+            else:  # reached picking target
+                my_franka.gripper.close()
+                # print(f'gripper2:{my_franka.gripper.get_joint_positions()}')
+                my_controller.my_task.place=True
+                for _ in range(wait_steps):
+                    my_world.step(render=True)
+                sim_js = my_franka.get_joints_state()
+                my_controller.update(ignore_substring, robot_prim_path)
+                my_controller.attach_obj(sim_js, my_franka.dof_names)
+                my_task.get_place_position(observations)
+
+        else:  # target position has been set
+            sim_js = my_franka.get_joints_state()
+            art_action = my_controller.forward(sim_js, my_franka.dof_names)
+            if art_action is not None:
+                articulation_controller.apply_action(art_action)
+                # for _ in range(2):
+                #    my_world.step(render=False)
 
     simulation_app.close()
 if __name__=='__main__':

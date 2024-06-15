@@ -495,8 +495,9 @@ while simulation_app.is_running():
 
     step_index = my_world.current_time_step_index
     observations = my_world.get_observations()
+    # print('observations:',observations)
     sim_js = my_franka.get_joints_state()
-
+    print(f'gripper:{my_franka.gripper.get_joint_positions()}')
     if my_controller.reached_target(observations):
         if my_franka.gripper.get_joint_positions()[0] < 0.035:  # reached placing target
             my_franka.gripper.open()
@@ -527,6 +528,7 @@ while simulation_app.is_running():
     else:  # target position has been set
         sim_js = my_franka.get_joints_state()
         art_action = my_controller.forward(sim_js, my_franka.dof_names)
+        print(art_action)
         if art_action is not None:
             articulation_controller.apply_action(art_action)
             # for _ in range(2):

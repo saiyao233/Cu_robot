@@ -107,6 +107,7 @@ def add_robot_to_scene(
     robot_p = Robot(
         prim_path=robot_path + "/" + base_link_name,
         name=robot_name,
+        # position=position,
     )
 
     robot_prim = robot_p.prim

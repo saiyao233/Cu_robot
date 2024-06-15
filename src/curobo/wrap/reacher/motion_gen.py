@@ -183,7 +183,7 @@ class MotionGenConfig:
         # 6
         interpolation_dt: float = 0.02,
         interpolation_type: InterpolateType = InterpolateType.LINEAR_CUDA,
-        use_cuda_graph: bool = True,
+        use_cuda_graph: bool = True,#true
         self_collision_check: bool = True,
         self_collision_opt: bool = True,
         grad_trajopt_iters: Optional[int] = None,
@@ -377,7 +377,7 @@ class MotionGenConfig:
                 base_config_data["world_collision_checker_cfg"], world_model, tensor_args
             )
             world_coll_checker = create_collision_checker(world_cfg)
-            print('world_coll_checker',world_coll_checker)
+            # print('world_coll_checker',world_coll_checker)
         ik_solver_cfg = IKSolverConfig.load_from_robot_config(
             robot_cfg,
             world_model,
@@ -1397,7 +1397,7 @@ class MotionGen(MotionGenConfig):
         solve_state = self._get_solve_state(
             ReacherSolveType.SINGLE, plan_config, goal_pose, start_state
         )
-
+        # print('link_poses', link_poses)
         result = self._plan_attempts(
             solve_state,
             start_state,
@@ -2259,10 +2259,11 @@ class MotionGen(MotionGenConfig):
         return metrics
 
     def update_world(self, world: WorldConfig):
-        self.clear_world_cache()
-        # print("traj_world", world)
+        # self.clear_world_cache()
+        # print('1',self.world_coll_checker)
+        
         self.world_coll_checker.load_collision_model(world, fix_cache_reference=self.use_cuda_graph)
-
+        # print('1-1',self.world_coll_checker)
         self.graph_planner.reset_graph()
         return True
 

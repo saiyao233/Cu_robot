@@ -293,6 +293,7 @@ def main():
                     "/curobo",
                 ],
             ).get_collision_check_world()
+            # ).get_mesh_world
             print(len(obstacles.objects))
 
             motion_gen.update_world(obstacles)
