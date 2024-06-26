@@ -444,6 +444,7 @@ def main():
             )
             link_poses = {}
             for i in target_links.keys():
+                print(f"i:{i}")
                 c_p, c_rot = target_links[i].get_world_pose()
                 print(c_p,c_rot)
                 link_poses[i] = Pose(

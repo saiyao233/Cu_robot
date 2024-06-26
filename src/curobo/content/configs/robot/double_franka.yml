@@ -5,6 +5,7 @@ robot_cfg:
     asset_root_path: "robot/franka_description"
     base_link: "base_fixture_link"
     ee_link: "panda_hand"
+    link_names: ["panda_hand","panda2_hand"]
     collision_link_names:
       [
         "panda_link0",
@@ -35,7 +36,7 @@ robot_cfg:
       ]
     collision_spheres: "spheres/double_franka_mesh.yml"
     collision_sphere_buffer: 0.004 # 0.0025
-    # extra_collision_spheres: {"attached_object": 4}
+    extra_collision_spheres: {"attached_object": 4,"attached_object2": 4}
     # maybe hidden danger
     # use_global_cumul: True
     self_collision_ignore:
@@ -128,6 +129,7 @@ robot_cfg:
     "attached_object2":{"parent_link_name": "panda2_hand" ,
     "link_name": "attached_object2", "fixed_transform": [0,0,0,1,0,0,0], "joint_type":"FIXED",
     "joint_name": "attach_joint2" }}
+    
     cspace:
       joint_names: ["panda_joint1","panda_joint2","panda_joint3","panda_joint4", "panda_joint5",
       "panda_joint6","panda_joint7","panda_finger_joint1", "panda_finger_joint2",

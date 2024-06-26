@@ -113,15 +113,22 @@ class TaskController(BaseController):
         self.world_file='collision_table.yml'
         self.cmd_js_names=[
             'panda_joint1',
+            'panda2_joint1',
             'panda_joint2',
+            'panda2_joint2',
             'panda_joint3',
+            'panda2_joint3',
             'panda_joint4',
+            'panda2_joint4',
             'panda_joint5',
+            'panda2_joint5',
             'panda_joint6',
+            'panda2_joint6',
             'panda_joint7',
+            'panda2_joint7',
         ]
         self.tensor_args=TensorDeviceType()
-        self.robot_cfg = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))["robot_cfg"]
+        self.robot_cfg = load_yaml(join_path(get_robot_configs_path(), "double_franka.yml"))["robot_cfg"]
 
         world_cfg_table = WorldConfig.from_dict(
             load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
@@ -196,6 +203,8 @@ class TaskController(BaseController):
         self,
         ee_translation_goal:np.array,
         ee_orientation_goal:np.array,
+        link_translation_goal:np.array,
+        link_orientation_goal:np.array,
         sim_js:JointState,
         js_names:list,
     ) ->MotionGenResult:
@@ -203,6 +212,12 @@ class TaskController(BaseController):
             position=self.tensor_args.to_device(ee_translation_goal),
             quaternion=self.tensor_args.to_device(ee_orientation_goal),
        )
+        link_poses = {}
+  
+        link_poses["panda2_hand"] = Pose(
+                    position=self.tensor_args.to_device(link_translation_goal),
+                    quaternion=self.tensor_args.to_device(link_orientation_goal),
+                )
         cu_js = JointState(
             position=self.tensor_args.to_device(sim_js.positions),
             velocity=self.tensor_args.to_device(sim_js.velocities) * 0.0,
@@ -210,8 +225,9 @@ class TaskController(BaseController):
             jerk=self.tensor_args.to_device(sim_js.velocities) * 0.0,
             joint_names=js_names,
         )
+        # print(f'joint_name:{self.motion_gen.kinematics.joint_names}')
         cu_js = cu_js.get_ordered_joint_state(self.motion_gen.kinematics.joint_names)
-        result = self.motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, self.plan_config.clone())
+        result = self.motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, self.plan_config.clone(),link_poses=link_poses)
         if self._save_log:  # and not result.success.item(): # logging for debugging
             UsdHelper.write_motion_gen_log(
                 result,
@@ -241,8 +257,11 @@ class TaskController(BaseController):
             # Set EE goals
             ee_translation_goal = self.my_task.target_position
             ee_orientation_goal = np.array([0, 0, -1, 0])
+
+            link_translation_goal=self.my_task.target_position2
+            link_orientation_goal=np.array([0,0,-1,0])
             # compute curobo solution:
-            result = self.plan(ee_translation_goal, ee_orientation_goal, sim_js, js_names)
+            result = self.plan(ee_translation_goal, ee_orientation_goal,link_translation_goal,link_orientation_goal,sim_js, js_names)
             succ = result.success.item()
             if succ:
                 cmd_plan = result.get_interpolated_plan()
@@ -269,12 +288,13 @@ class TaskController(BaseController):
         self._step_idx += 1
         return art_action
     def reached_target(self,observations:dict)->bool:
-        curr_ee_position=observations["my_franka"]["end_effector_position"]
-        if np.linalg.norm(
-            self.my_task.target_position - curr_ee_position
-        ) < 0.04 and (  # This is half gripper width, curobo succ threshold is 0.5 cm
-            self.cmd_plan is None
-        ):
+        curr_ee_position=observations["double_franka"]["end_effector_position"]
+        curr_link_position=observations['double_franka']['link_effector_position']
+        first_distance=np.linalg.norm(self.my_task.target_position - curr_ee_position)
+        second_distance=np.linalg.norm(self.my_task.target_position2-curr_link_position)
+        print(f'first_distance:{first_distance},sencond_distance:{second_distance}')
+        if first_distance < 0.04 and second_distance <0.04 and (  # This is half gripper width, curobo succ threshold is 0.5 cm
+            self.cmd_plan is None):
             if self.my_task.cube_in_hand is None:
                 print("reached picking target: ", self.my_task.target_cube)
             else:
@@ -319,33 +339,42 @@ class PickPlace(MultiPickPlace):
             cube_initial_positions=np.array(
                 [
                     # [0.50, 0.0, 0.1],
-                    [0.50, -0.5, 0.1],
+                    [0.75, 0.4, 0.1],
+                    [-0.75, 0.4, 0.1]
                 ]
             )
             / get_stage_units(),
             cube_initial_orientations=None,
             # stack_target_position=None,
-            cube_size=np.array([0.045, 0.045, 0.07]),
+            cube_size=np.array([0.040, 0.040, 0.07]),
             offset=offset,
         )
         self.cube_list = None
         self.target_position = None
+        self.target_position2=None
         self.target_cube = None
+        self.target_cube2=None
         self.cube_in_hand = None
+        self.cube_in_hand2=None
         self.robot_cfg=self.get_robot_config()
         self.word_cfg=my_world
         self.place=False
+        self.place2=False
     def get_robot_config(self):
-        robot_cfg = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))["robot_cfg"]
+        robot_cfg = load_yaml(join_path(get_robot_configs_path(), "double_franka.yml"))["robot_cfg"]
 
         return robot_cfg
 
     def reset(self) -> None:
         self.cube_list = self.get_cube_names()
         self.target_position = None
+        self.target_position2=None
         self.target_cube = None
+        self.target_cube2=None
         self.cube_in_hand = None
+        self.cube_in_hand2=None
         self.place = False
+        self.place2=False
     def update_task(self) -> bool:
         # after detaching the cube in hand
         assert self.target_cube is not None
@@ -379,28 +408,38 @@ class PickPlace(MultiPickPlace):
         #     0,
         #     self._cube_size[2] + ee_to_grasped_cube + 0.02,
         # ]
-        self.target_position=np.array([0.3,-0.3,self._cube_size[2] / 2 + 0.192])
+        self.target_position=np.array([0.75,1,self._cube_size[2] / 2 + 0.190])
+        self.target_position2=np.array([-0.75,1,self._cube_size[2] / 2 + 0.190])
         
         # self.cube_list.remove(self.target_cube)
 
     def get_pick_position(self, observations: dict) -> None:
         # make sure that there is no cude in hand
         assert self.cube_in_hand is None
+        assert self.cube_in_hand2 is None
         # find targe cube and postion
-        self.target_cube = self.cube_list[-1]
+        self.target_cube = self.cube_list[-2]
+        self.target_cube2=self.cube_list[-1]
+
         self.target_position = observations[self.target_cube]["position"] + [
             0,
             0,
             self._cube_size[2] / 2 + 0.092,
         ]
+        self.target_position2 = observations[self.target_cube2]["position"] + [
+            0,
+            0,
+            self._cube_size[2] / 2 + 0.092,
+        ]
         self.cube_list.remove(self.target_cube)
+        self.cube_list.remove(self.target_cube2)
 
     def set_robot(self,
             # robot_config: Dict,
             # my_world: World,
             load_from_usd: bool = False,
             subroot: str = "",
-            robot_name: str = "my_franka",
+            robot_name: str = "double_franka",
             position: np.array = np.array([0, 0, 0])
             )->Dual_Robot:
             # robot_config=self.robot_cfg
@@ -446,7 +485,8 @@ class PickPlace(MultiPickPlace):
                 prim_path=robot_path + "/" + base_link_name,
                 # prim_path=robot_path,
                 name=robot_name,
-                end_effector_prim_name="panda_hand"
+                end_effector_prim_name="panda_hand",
+                link_effector_prim_name="panda2_hand"
             )
 
             robot_prim = robot_p.prim
@@ -470,8 +510,8 @@ class PickPlace(MultiPickPlace):
         
 
 def main():
-    robot_prim_path = "/World/panda/panda_link0"
-    ignore_substring = ["panda", "TargetCube", "material", "Plane"]
+    robot_prim_path = "/World/double_franka/panda_link0"
+    ignore_substring = ["double_franka", "TargetCube", "material", "Plane"]
     my_world = World(stage_units_in_meters=1.0)
     stage = my_world.stage
 
@@ -503,14 +543,17 @@ def main():
     #     my_franka.enable_gravity()
     #     articulation_controller.set_gains(
     #         kps=np.array(
-    #             [100000000, 6000000.0, 10000000, 600000.0, 25000.0, 15000.0, 50000.0, 6000.0, 6000.0]
+    #             [100000000, 6000000.0, 10000000, 600000.0, 25000.0, 15000.0, 50000.0, 6000.0, 6000.0,
+    #              100000000, 6000000.0, 10000000, 600000.0, 25000.0, 15000.0, 50000.0, 6000.0, 6000.0,]
     #         )
     #     )
 
     #     articulation_controller.set_max_efforts(
-    #         values=np.array([100000, 52.199997, 100000, 52.199997, 7.2, 7.2, 7.2, 50.0, 50])
+    #         values=np.array([100000, 52.199997, 100000, 52.199997, 7.2, 7.2, 7.2, 50.0, 50,
+    #                          100000, 52.199997, 100000, 52.199997, 7.2, 7.2, 7.2, 50.0, 50])
     #     )
     my_franka.gripper.open()
+    my_franka.gripper2.open()
     for _ in range(wait_steps):
         my_world.step(render=True)
     # complete configeration
@@ -523,8 +566,10 @@ def main():
     # print(my_task.target_position)
     i=0
     while simulation_app.is_running():
+    
         my_world.step(render=True)  # necessary to visualize changes
         i += 1
+        # print(f'observation:{observations["double_franka"]}')
 
         if task_finished or i < initial_steps:
             continue
@@ -540,12 +585,13 @@ def main():
         # print(f'cube_in_hand:{my_task.cube_in_hand}')
         # print(f'gripper:{my_franka.gripper.get_joint_positions()}')
 
-
         if my_controller.reached_target(observations):
-            print(f'gripper:{my_franka.gripper.get_joint_positions()}')
+            # print(f'gripper:{my_franka.gripper.get_joint_positions()}')
             # if my_franka.gripper.get_joint_positions()[0] < 0.035:  # reached placing target
+            # seconde step: to place
             if my_controller.my_task.place==True:
                 my_franka.gripper.open()
+                my_franka.gripper2.open()
                 for _ in range(wait_steps):
                     my_world.step(render=True)
                 my_controller.detach_obj()
@@ -560,9 +606,10 @@ def main():
                     continue
                 else:
                     my_task.get_pick_position(observations)
-
+            # first step: to pick
             else:  # reached picking target
                 my_franka.gripper.close()
+                my_franka.gripper2.close()
                 # print(f'gripper2:{my_franka.gripper.get_joint_positions()}')
                 my_controller.my_task.place=True
                 for _ in range(wait_steps):
@@ -572,13 +619,16 @@ def main():
                 my_controller.attach_obj(sim_js, my_franka.dof_names)
                 my_task.get_place_position(observations)
 
-        else:  # target position has been set
+        else: 
+            # print('222') # target position has been set
             sim_js = my_franka.get_joints_state()
+            
             art_action = my_controller.forward(sim_js, my_franka.dof_names)
+            # print(f'art_action:{art_action}')
             if art_action is not None:
                 articulation_controller.apply_action(art_action)
-                # for _ in range(2):
-                #    my_world.step(render=False)
+                for _ in range(2):
+                   my_world.step(render=False)
 
     simulation_app.close()
 if __name__=='__main__':
