@@ -49,7 +49,7 @@ parser.add_argument(
     "--reactive",
     action="store_true",
     help="When True, runs in reactive mode",
-    default=True,
+    default=False,
 )
 # fix difference 4
 parser.add_argument(
@@ -473,7 +473,10 @@ def main():
 
             if succ:
                 num_targets += 1
+                # print(result.optimized_plan.shape)
+                # print(result.interpolated_plan.shape)
                 cmd_plan = result.get_interpolated_plan()
+                # print(f'plane:{cmd_plan.position.shape}')
                 cmd_plan = motion_gen.get_full_js(cmd_plan)
                 # get only joint names that are in both:
                 idx_list = []

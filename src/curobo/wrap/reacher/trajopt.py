@@ -574,7 +574,7 @@ class TrajOptSolver(TrajOptSolverConfig):
                 newton_iters=newton_iters,
             )
 
-    def solve_from_solve_state(
+    def  solve_from_solve_state(
         self,
         solve_state: ReacherSolveState,
         goal: Goal,
@@ -595,6 +595,7 @@ class TrajOptSolver(TrajOptSolverConfig):
         # if self.evaluate_interpolated_trajectory:
         self.interpolate_rollout.update_params(goal_buffer)
         # get seeds:
+
         seed_traj = self.get_seed_set(
             goal_buffer, seed_traj, seed_success, num_seeds, solve_state.batch_mode
         )
@@ -1048,9 +1049,11 @@ class TrajOptSolver(TrajOptSolverConfig):
 
     def get_linear_seed(self, start_state, goal_state):
         start_q = start_state.position.view(-1, 1, self.dof)
+        # print(f'start_q:{start_q}')
         end_q = goal_state.position.view(-1, 1, self.dof)
+        # print(f'end_q:{end_q}')
         edges = torch.cat((start_q, end_q), dim=1)
-
+        # print(f'edges:{edges}')
         seed = self.delta_vec @ edges
         return seed
 
@@ -1084,15 +1087,17 @@ class TrajOptSolver(TrajOptSolverConfig):
     ):
         # if batch_mode:
         total_seeds = goal.batch * num_seeds
-        # else:
-        #    total_seeds = num_seeds
-
+   
         if isinstance(seed_traj, JointState):
             seed_traj = seed_traj.position
+            # print(f'seed_traj:{seed_traj.shape}')
+
         if seed_traj is None:
+            # print(f"seed_is None")
             if goal.goal_state is not None and self.use_cspace_seed:
                 # get linear seed
                 seed_traj = self.get_seeds(goal.current_state, goal.goal_state, num_seeds=num_seeds)
+                # print(f'seed_traj:{seed_traj.shape}')
                 # .view(batch_size, self.num_seeds, self.action_horizon, self.dof)
             else:
                 # get start repeat seed:
@@ -1101,19 +1106,22 @@ class TrajOptSolver(TrajOptSolverConfig):
                     goal.current_state, goal.current_state, num_seeds=num_seeds
                 )
         elif seed_success is not None:
+            # print("2")
             lin_seed_traj = self.get_seeds(goal.current_state, goal.goal_state, num_seeds=num_seeds)
             lin_seed_traj[seed_success] = seed_traj  # [seed_success]
             seed_traj = lin_seed_traj
             total_seeds = goal.batch * num_seeds
         elif num_seeds > seed_traj.shape[0]:
+            # print("3")
             new_seeds = self.get_seeds(
                 goal.current_state, goal.goal_state, num_seeds - seed_traj.shape[0]
             )
             seed_traj = torch.cat((seed_traj, new_seeds), dim=0)  # n_seed, batch, h, dof
-
+        # print('shaping seed')
         seed_traj = seed_traj.view(
             total_seeds, self.action_horizon, self.dof
         )  #  n_seeds,batch, h, dof
+        # print(f'shape2:{seed_traj.shape}')
         return seed_traj
 
     def get_seeds(self, start_state, goal_state, num_seeds=None):
@@ -1123,7 +1131,7 @@ class TrajOptSolver(TrajOptSolverConfig):
             n_seeds = self._n_seeds
         else:
             n_seeds = self._get_seed_numbers(num_seeds)
-        # linear seed: batch x dof -> batch x n_seeds x dof
+    
         seed_set = []
         if n_seeds["linear"] > 0:
             linear_seed = self.get_linear_seed(start_state, goal_state)
@@ -1131,6 +1139,7 @@ class TrajOptSolver(TrajOptSolverConfig):
             linear_seeds = linear_seed.view(1, -1, self.action_horizon, self.dof).repeat(
                 1, n_seeds["linear"], 1, 1
             )
+            # print(f'linear_seedss:{linear_seeds.shape}')
             seed_set.append(linear_seeds)
         if n_seeds["bias"] > 0:
             bias_seed = self.get_bias_seed(start_state, goal_state)
@@ -1155,7 +1164,7 @@ class TrajOptSolver(TrajOptSolverConfig):
         all_seeds = torch.cat(
             seed_set, dim=1
         )  # .#transpose(0,1).contiguous()  # n_seed, batch, h, dof
-
+        # print(f'all_seeds:{all_seeds.shape}')
         return all_seeds
 
     def get_bias_seed(self, start_state, goal_state):
@@ -1165,7 +1174,7 @@ class TrajOptSolver(TrajOptSolverConfig):
         bias_q = self.bias_node.view(-1, 1, self.dof).repeat(start_q.shape[0], 1, 1)
         edges = torch.cat((start_q, bias_q, end_q), dim=1)
         seed = self.waypoint_delta_vec @ edges
-        # print(seed)
+
         return seed
 
     @profiler.record_function("trajopt/interpolation")

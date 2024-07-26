@@ -151,6 +151,7 @@ class WrapBase(WrapConfig):
         act = self.safety_rollout.get_robot_command(
             filtered_state, act_seq, state_idx=goal.batch_current_state_idx
         )
+        # print(f'act.shape:{act.shape}')
 
         if self.compute_metrics:
             with profiler.record_function("wrap_base/compute_metrics"):

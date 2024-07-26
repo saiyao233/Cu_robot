@@ -146,6 +146,7 @@ class TaskController(BaseController):
             self._world_cfg,
             self.tensor_args,
             trajopt_tsteps=32,
+            num_trajopt_seeds=16,
             collision_checker_type=CollisionCheckerType.MESH,
             use_cuda_graph=True,
             interpolation_dt=0.01,
@@ -155,9 +156,9 @@ class TaskController(BaseController):
             velocity_scale=0.75,
         )
         self.motion_gen = MotionGen(motion_gen_config)
-        print("warming up...")
-        self.motion_gen.warmup(parallel_finetune=True)
-        pose_metric = None
+        # print("warming up...")
+        # self.motion_gen.warmup(parallel_finetune=True)
+        pose_metric = None                                                                                                                                                                                                                                                                                                                                                                                                                                                    
         if constrain_grasp_approach:
             pose_metric = PoseCostMetric.create_grasp_approach_metric(
                 offset_position=0.1, tstep_fraction=0.8
@@ -167,7 +168,7 @@ class TaskController(BaseController):
             enable_graph=False,
             max_attempts=10,
             enable_graph_attempt=None,
-            enable_finetune_trajopt=True,
+            enable_finetune_trajopt=False,
             partial_ik_opt=False,
             parallel_finetune=True,
             pose_cost_metric=pose_metric,
@@ -207,6 +208,8 @@ class TaskController(BaseController):
         link_orientation_goal:np.array,
         sim_js:JointState,
         js_names:list,
+        seed:JointState,
+        finetune_seed:JointState
     ) ->MotionGenResult:
         ik_goal=Pose(
             position=self.tensor_args.to_device(ee_translation_goal),
@@ -227,7 +230,7 @@ class TaskController(BaseController):
         )
         # print(f'joint_name:{self.motion_gen.kinematics.joint_names}')
         cu_js = cu_js.get_ordered_joint_state(self.motion_gen.kinematics.joint_names)
-        result = self.motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, self.plan_config.clone(),link_poses=link_poses)
+        result = self.motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, self.plan_config.clone(),link_poses=link_poses,seed=seed,finetune_seed=finetune_seed)
         if self._save_log:  # and not result.success.item(): # logging for debugging
             UsdHelper.write_motion_gen_log(
                 result,
@@ -248,9 +251,20 @@ class TaskController(BaseController):
         self,
         sim_js:JointState,
         js_names:list,
+        seed:JointState,
+        f_seed:JointState
     ) -> ArticulationAction:
         assert self.my_task.target_position is not None
         assert self.my_task.target_cube is not None
+        succ_seed=None
+        finetune_seed=None
+
+
+        if seed is not None:
+            succ_seed=seed
+        if f_seed is not None:
+            finetune_seed=f_seed
+        
         if self.cmd_plan is None:
             self.cmd_idx = 0
             self._step_idx = 0
@@ -261,15 +275,42 @@ class TaskController(BaseController):
             link_translation_goal=self.my_task.target_position2
             link_orientation_goal=np.array([0,0,-1,0])
             # compute curobo solution:
-            result = self.plan(ee_translation_goal, ee_orientation_goal,link_translation_goal,link_orientation_goal,sim_js, js_names)
+            result = self.plan(ee_translation_goal, ee_orientation_goal,link_translation_goal,link_orientation_goal,sim_js, js_names,succ_seed,finetune_seed)
+            # print(f'success:{result}')
             succ = result.success.item()
+            
+
+            # seed = result.success_seed
+            # fine_seed=result.finetune_seed
+        
             if succ:
+                # fine succ seed
+                # print(f'cmd_plan:{result.optimized_plan.shape}')
+                # succ_seed = seed
+                # finetune_seed=fine_seed
+                # print(f'final:{result.final_result}')
+                # print(f'final:{result.final_result.raw_solution.position}')
+                # succ_seed = result.final_result.raw_solution.position
+                # print(succ_seed.shape)
+                # print(f'succ_seed:{succ_seed}')
+                # torch.save(succ_seed,'succ_seed.pth')
+                # exit(0)
+
+                # succ_seed = result.optimized_plan.position[1:29]
+                # succ_seed= succ_seed.detach().cpu().numpy()
+                # succ_seed.dump('succ_seed.npy')
+                # succ_seed[-1] =result.optimized_plan.position[-1] 
+                # print(result.optimized_plan.position) 
+                # print(f'succ_seed:{succ_seed}')
+                # print(f'mid:{result.mid_result.raw_solution.position[0]}')
                 cmd_plan = result.get_interpolated_plan()
+                # print(f'planeshape:{cmd_plan.shape}')
                 self.idx_list = [i for i in range(len(self.cmd_js_names))]
                 self.cmd_plan = cmd_plan.get_ordered_joint_state(self.cmd_js_names)
             else:
                 carb.log_warn("Plan did not converge to a solution.")
-                return None
+                # print("")
+                return None,succ_seed,finetune_seed
         if self._step_idx % 3 == 0:
             cmd_state = self.cmd_plan[self.cmd_idx]
             self.cmd_idx += 1
@@ -286,13 +327,14 @@ class TaskController(BaseController):
         else:
             art_action = None
         self._step_idx += 1
-        return art_action
+
+        return art_action,succ_seed,finetune_seed
     def reached_target(self,observations:dict)->bool:
         curr_ee_position=observations["double_franka"]["end_effector_position"]
         curr_link_position=observations['double_franka']['link_effector_position']
         first_distance=np.linalg.norm(self.my_task.target_position - curr_ee_position)
         second_distance=np.linalg.norm(self.my_task.target_position2-curr_link_position)
-        print(f'first_distance:{first_distance},sencond_distance:{second_distance}')
+        # print(f'first_distance:{first_distance},sencond_distance:{second_distance}')
         if first_distance < 0.04 and second_distance <0.04 and (  # This is half gripper width, curobo succ threshold is 0.5 cm
             self.cmd_plan is None):
             if self.my_task.cube_in_hand is None:
@@ -339,14 +381,14 @@ class PickPlace(MultiPickPlace):
             cube_initial_positions=np.array(
                 [
                     # [0.50, 0.0, 0.1],
-                    [0.75, 0.4, 0.1],
-                    [-0.75, 0.4, 0.1]
+                    [-0.20, 0.15, 0.1],
+                    [0.20, 0.4, 0.1],
                 ]
             )
             / get_stage_units(),
             cube_initial_orientations=None,
             # stack_target_position=None,
-            cube_size=np.array([0.040, 0.040, 0.07]),
+            cube_size=np.array([0.045, 0.045, 0.03]),
             offset=offset,
         )
         self.cube_list = None
@@ -408,8 +450,8 @@ class PickPlace(MultiPickPlace):
         #     0,
         #     self._cube_size[2] + ee_to_grasped_cube + 0.02,
         # ]
-        self.target_position=np.array([0.75,1,self._cube_size[2] / 2 + 0.190])
-        self.target_position2=np.array([-0.75,1,self._cube_size[2] / 2 + 0.190])
+        self.target_position=np.array([0.30,1,self._cube_size[2] / 2 + 0.190])
+        self.target_position2=np.array([-0.30,1,self._cube_size[2] / 2 + 0.190])
         
         # self.cube_list.remove(self.target_cube)
 
@@ -522,7 +564,7 @@ def main():
     stage = my_world.stage
     usd_help = UsdHelper()
     usd_help.load_stage(my_world.stage)
-    # my_world.scene.add_default_ground_plane()
+    my_world.scene.add_default_ground_plane()
     my_task = PickPlace(my_world=my_world)
     my_world.add_task(my_task)
     my_world.reset()
@@ -565,10 +607,14 @@ def main():
     my_task.get_pick_position(observations)
     # print(my_task.target_position)
     i=0
+    seed=None
+    finetune_seed=None
+
     while simulation_app.is_running():
     
         my_world.step(render=True)  # necessary to visualize changes
         i += 1
+        # print(f'step:{i}')
         # print(f'observation:{observations["double_franka"]}')
 
         if task_finished or i < initial_steps:
@@ -580,29 +626,27 @@ def main():
         step_index = my_world.current_time_step_index
         observations = my_world.get_observations()
         sim_js = my_franka.get_joints_state()
-        # print(f'target_position:{my_task.target_position}')
-        # print(f'target_cude:{my_task.target_cube}')
-        # print(f'cube_in_hand:{my_task.cube_in_hand}')
-        # print(f'gripper:{my_franka.gripper.get_joint_positions()}')
+
 
         if my_controller.reached_target(observations):
             # print(f'gripper:{my_franka.gripper.get_joint_positions()}')
             # if my_franka.gripper.get_joint_positions()[0] < 0.035:  # reached placing target
-            # seconde step: to place
+            #seconde step: to place
             if my_controller.my_task.place==True:
                 my_franka.gripper.open()
                 my_franka.gripper2.open()
                 for _ in range(wait_steps):
                     my_world.step(render=True)
-                my_controller.detach_obj()
-                my_controller.update(
-                    ignore_substring, robot_prim_path
-                )  # update world collision configuration
-                task_finished = my_task.update_task()
+                    my_controller.detach_obj()
+                    my_controller.update(
+                        ignore_substring, robot_prim_path
+                    )  # update world collision configuration
+                    task_finished = my_task.update_task()
                 if task_finished:
                     print("\nTASK DONE\n")
                     for _ in range(wait_steps):
                         my_world.step(render=True)
+
                     continue
                 else:
                     my_task.get_pick_position(observations)
@@ -618,12 +662,27 @@ def main():
                 my_controller.update(ignore_substring, robot_prim_path)
                 my_controller.attach_obj(sim_js, my_franka.dof_names)
                 my_task.get_place_position(observations)
+                                # todooooooooo!
+
+            # for _ in range(wait_steps):
+            #     my_world.step(render=True)
+            # my_world.reset()
+            # my_task.reset()
+            # for _ in range(30):
+            #     my_world.step(render=True)
+            # task_finished = False
+            # observations = my_world.get_observations()
+            #         # 获取目标1的位置
+            # my_task.get_pick_position(observations)
 
         else: 
-            # print('222') # target position has been set
+            # target position has been set
+            # if seed is not None:
+            #     print(f'seed.shape:{seed.shape}')
             sim_js = my_franka.get_joints_state()
-            
-            art_action = my_controller.forward(sim_js, my_franka.dof_names)
+            art_action,seed,finetune_seed= my_controller.forward(sim_js, my_franka.dof_names,seed,finetune_seed)
+
+
             # print(f'art_action:{art_action}')
             if art_action is not None:
                 articulation_controller.apply_action(art_action)

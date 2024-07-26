@@ -815,6 +815,14 @@ class MotionGenResult:
     #: stores the index of the goal pose reached when planning for a goalset.
     goalset_index: Optional[torch.Tensor] = None
 
+    # 11111
+    success_seed:JointState = None
+    finetune_seed:JointState=None
+
+    mid_result = None
+    final_result=None
+    ik_result=None
+
     def clone(self):
         m = MotionGenResult(
             self.success.clone(),
@@ -931,6 +939,7 @@ class MotionGenResult:
 
     def get_interpolated_plan(self) -> JointState:
         if self.path_buffer_last_tstep is None:
+            # print('1')
             return self.interpolated_plan
         if len(self.path_buffer_last_tstep) > 1:
             raise ValueError("only single result is supported")
@@ -1030,7 +1039,7 @@ class MotionGen(MotionGenConfig):
             newton_iters,
             link_poses,
         )
-        # print(ik_result)
+        # print(ik_result.success)
         return ik_result
 
     @profiler.record_function("motion_gen/trajopt_solve")
@@ -1045,7 +1054,10 @@ class MotionGen(MotionGenConfig):
         newton_iters: Optional[int] = None,
         trajopt_instance: Optional[TrajOptSolver] = None,
         num_seeds_override: Optional[int] = None,
-    ) -> TrajOptResult:
+    ):
+        # seed success?
+        # how it work?
+        # print(f'num_seeds_override:{num_seeds_override}')
         if trajopt_instance is None:
             trajopt_instance = self.trajopt_solver
         if num_seeds_override is None:
@@ -1160,10 +1172,11 @@ class MotionGen(MotionGenConfig):
         goal_pose: Pose,
         plan_config: MotionGenPlanConfig = MotionGenPlanConfig(),
         link_poses: List[Pose] = None,
+        seed:JointState=None,
+        finetune_seed:JointState=None,
     ):
         start_time = time.time()
         if plan_config.pose_cost_metric is not None:
-            # print("1")
             valid_query = self.update_pose_cost_metric(
                 plan_config.pose_cost_metric, start_state, goal_pose
             )
@@ -1194,13 +1207,16 @@ class MotionGen(MotionGenConfig):
             plan_config.finetune_dt_scale = self.finetune_dt_scale
         # important
         for n in range(plan_config.max_attempts):
-            log_info("MG Iter: " + str(n))
+            # log_info("MG Iter: " + str(n))
+            # print(f'n: {n}')
             result = self._plan_from_solve_state(
                 solve_state,
                 start_state,
                 goal_pose,
                 plan_config,
                 link_poses,
+                seed,
+                finetune_seed,
             )
             time_dict["solve_time"] += result.solve_time
             time_dict["ik_time"] += result.ik_time
@@ -1393,17 +1409,21 @@ class MotionGen(MotionGenConfig):
         goal_pose: Pose,
         plan_config: MotionGenPlanConfig = MotionGenPlanConfig(),
         link_poses: List[Pose] = None,
+        seed: JointState=None,
+        finetune_seed:JointState=None
     ) -> MotionGenResult:
         solve_state = self._get_solve_state(
             ReacherSolveType.SINGLE, plan_config, goal_pose, start_state
         )
-        # print('link_poses', link_poses)
+
         result = self._plan_attempts(
             solve_state,
             start_state,
             goal_pose,
             plan_config,
             link_poses=link_poses,
+            seed=seed,
+            finetune_seed=finetune_seed
         )
         return result
 
@@ -1505,15 +1525,19 @@ class MotionGen(MotionGenConfig):
         goal_pose: Pose,
         plan_config: MotionGenPlanConfig = MotionGenPlanConfig(),
         link_poses: Optional[Dict[str, Pose]] = None,
+        seed:JointState=None,
+        finetune_seed:JointState=None
     ) -> MotionGenResult:
         trajopt_seed_traj = None
         trajopt_seed_success = None
         trajopt_newton_iters = None
+
         graph_success = 0
         if len(start_state.shape) == 1:
             log_error("Joint state should be not a vector (dof) should be (bxdof)")
         # plan ik:
         # important 2
+        # print(f'seed:{seed}')  
         ik_result = self._solve_ik_from_solve_state(
             goal_pose,
             solve_state,
@@ -1522,7 +1546,6 @@ class MotionGen(MotionGenConfig):
             plan_config.partial_ik_opt,
             link_poses,
         )
-        # print(ik_result)
         if not plan_config.enable_graph and plan_config.partial_ik_opt:
             ik_result.success[:] = True
 
@@ -1532,15 +1555,17 @@ class MotionGen(MotionGenConfig):
             ik_time=ik_result.solve_time,
             solve_time=ik_result.solve_time,
         )
-        # print(result)
         if self.store_debug_in_result:
             result.debug_info = {"ik_result": ik_result}
         ik_success = torch.count_nonzero(ik_result.success)
         if ik_success == 0:
+            # print('ik fail')
+         
             result.status = "IK Fail"
             return result
-
+        # print(ik_result.js_solution.position)
         # do graph search:
+        # print(f'ik_success:{ik_result}')
         with profiler.record_function("motion_gen/post_ik"):
             ik_out_seeds = solve_state.num_trajopt_seeds
             if plan_config.enable_graph:
@@ -1628,7 +1653,6 @@ class MotionGen(MotionGenConfig):
                     return result
 
         # do trajopt::
-
         if plan_config.enable_opt:
             with profiler.record_function("motion_gen/setup_trajopt_seeds"):
                 self._trajopt_goal_config[:, :ik_success] = goal_config
@@ -1646,6 +1670,7 @@ class MotionGen(MotionGenConfig):
                     trajopt_seed_traj is None
                     or graph_success < solve_state.num_trajopt_seeds * self.noisy_trajopt_seeds
                 ):
+                    # create seed goal:
                     goal_config = self._trajopt_goal_config[0]  # batch index == 0
 
                     goal_state = JointState.from_position(
@@ -1665,7 +1690,9 @@ class MotionGen(MotionGenConfig):
                         goal_state=goal_state,
                         links_goal_pose=seed_link_poses,
                     )
+                    
                     if trajopt_seed_traj is not None:
+                        # print("trajopt_seed_traj", trajopt_seed_traj.shape)
                         trajopt_seed_traj = trajopt_seed_traj.transpose(0, 1).contiguous()
                         # batch, num_seeds, h, dof
                         if (
@@ -1681,7 +1708,9 @@ class MotionGen(MotionGenConfig):
                                 trajopt_seed_success
                             )
                             trajopt_seed_success = trajopt_seed_success_new
+                    # 
                     # create seeds here:
+                    # print(f'trajopt_seed_traj.shape_1')    
                     trajopt_seed_traj = self.trajopt_solver.get_seed_set(
                         seed_goal,
                         trajopt_seed_traj,  # batch, num_seeds, h, dof
@@ -1689,33 +1718,79 @@ class MotionGen(MotionGenConfig):
                         batch_mode=solve_state.batch_mode,
                         seed_success=trajopt_seed_success,
                     )
+                    
+                    if seed is not None:
+                        # print(f'start:{start_state.position}')
+                        seed[:,0,:]=start_state.position
+                        print(f'start:{seed[0,0]}')
+                        print(f'end:{seed[0,-1]}')
+                        trajopt_seed_traj=seed
+                    # print(f'trajopt_seed_traj.shape:{trajopt_seed_traj.shape}')
+
+                    # seed = np.load("succ_seed.npy", allow_pickle=True)  
+                
+                    # print(f'seed:{trajopt_seed_traj}')
+                    # trajopt_seed_numpy = trajopt_seed_traj.detach().cpu().numpy()
+                    # trajopt_seed_numpy.dump('seed.npy')
+                    # print(f'shape:{trajopt_seed_traj.shape}')
+                    # trajopt_seed_traj=torch.load("succ_seed.pth")
+                    # seed=torch.load("succ_seed.pth")
+                    # mid=seed[:,1:29]
+                    # # print(mid)
+                    # end=seed[:,31]
+                    # mid[:,-1]=end
+                    # trajopt_seed_traj=mid.clone()
+
                     trajopt_seed_traj = trajopt_seed_traj.view(
                         solve_state.num_trajopt_seeds * self.noisy_trajopt_seeds,
                         solve_state.batch_size,
                         self.trajopt_solver.action_horizon,
                         self._dof,
                     ).contiguous()
+                    # print(f'trajopt_seed_traj: {trajopt_seed_traj}')
+            # trajopt_seed_traj = trajopt_seed_traj.view(
+            #             solve_state.num_trajopt_seeds * self.noisy_trajopt_seeds,
+            #             solve_state.batch_size,
+            #             self.trajopt_solver.action_horizon,
+            #             self._dof,
+            #         ).contiguous()
+# print(seed.type
+            # print(seed[:,1:29].shape)
+            # print(f'tarj:{trajopt_seed_traj}')
             if plan_config.enable_finetune_trajopt:
                 og_value = self.trajopt_solver.interpolation_type
                 self.trajopt_solver.interpolation_type = InterpolateType.LINEAR_CUDA
             with profiler.record_function("motion_gen/trajopt"):
                 log_info("MG: running TO")
+
+                # print(f'try_slove')
+                # why this fuciton slove slowly?????????????
                 traj_result = self._solve_trajopt_from_solve_state(
                     goal,
                     solve_state,
                     trajopt_seed_traj,
+                    # ？
                     num_seeds_override=solve_state.num_trajopt_seeds * self.noisy_trajopt_seeds,
                     newton_iters=trajopt_newton_iters,
                     return_all_solutions=plan_config.parallel_finetune
                     and plan_config.enable_finetune_trajopt,
                 )
+            # raw_action: [4,28,14]
+            # print(f'seed: {trajopt_seed_traj[0]}')
+            # print(f'raw_solution1: {traj_result.raw_solution.position[0]}')
+            result.mid_result=traj_result
+            # print(f'raw_action: {traj_result.raw_action[0]}')
             if plan_config.enable_finetune_trajopt:
                 self.trajopt_solver.interpolation_type = og_value
             if self.store_debug_in_result:
                 result.debug_info["trajopt_result"] = traj_result
             # run finetune
+
+            # print(trajopt_seed_traj.shape)
             if plan_config.enable_finetune_trajopt and torch.count_nonzero(traj_result.success) > 0:
+                # print(f'try_finetune')
                 with profiler.record_function("motion_gen/finetune_trajopt"):
+                    # 【4，28，14】
                     seed_traj = traj_result.raw_action.clone()  # solution.position.clone()
                     seed_traj = seed_traj.contiguous()
                     og_solve_time = traj_result.solve_time
@@ -1727,6 +1802,10 @@ class MotionGen(MotionGenConfig):
                         seed_override = solve_state.num_trajopt_seeds * self.noisy_trajopt_seeds
 
                     finetune_time = 0
+                    # five times
+                    # if finetune_seed is not None:
+                    #     seed_traj = finetune_seed
+                        # print(f'fseed_traj.shape:{seed_traj.shape}')
                     for k in range(plan_config.finetune_attempts):
                         newton_iters = None
 
@@ -1738,10 +1817,10 @@ class MotionGen(MotionGenConfig):
                         )
                         if self.optimize_dt:
                             self.finetune_trajopt_solver.update_solver_dt(scaled_dt.item())
-
+                        # changed the solver
                         traj_result = self._solve_trajopt_from_solve_state(
                             goal,
-                            solve_state,
+                            solve_state, 
                             seed_traj,
                             trajopt_instance=self.finetune_trajopt_solver,
                             num_seeds_override=seed_override,
@@ -1756,6 +1835,7 @@ class MotionGen(MotionGenConfig):
                     traj_result.solve_time = finetune_time
 
                 result.finetune_time = traj_result.solve_time
+                result.finetune_seed=seed_traj
 
                 traj_result.solve_time = og_solve_time
                 if self.store_debug_in_result:
@@ -1764,6 +1844,8 @@ class MotionGen(MotionGenConfig):
                 traj_result.success = traj_result.success[0:1]
                 # if torch.count_nonzero(result.success) == 0:
                 result.status = "Opt Fail"
+            # print(f'traj_result:{traj_result}')
+            result.final_result=traj_result
             result.solve_time += traj_result.solve_time + result.finetune_time
             result.trajopt_time = traj_result.solve_time
             result.trajopt_attempts = 1
@@ -1782,6 +1864,10 @@ class MotionGen(MotionGenConfig):
             result.optimized_dt = traj_result.optimized_dt
             result.optimized_plan = traj_result.solution
             result.goalset_index = traj_result.goalset_index
+            result.success_seed=trajopt_seed_traj
+            # print(f'raw_solution2: {traj_result.raw_solution.position[0]}')
+         
+            
         return result
 
     def _plan_js_from_solve_state(
@@ -1892,6 +1978,7 @@ class MotionGen(MotionGenConfig):
                         current_state=start_state.repeat_seeds(solve_state.num_trajopt_seeds),
                         goal_state=goal_state.repeat_seeds(solve_state.num_trajopt_seeds),
                     )
+                    # process seed that graph
                     if trajopt_seed_traj is not None:
                         trajopt_seed_traj = trajopt_seed_traj.transpose(0, 1).contiguous()
                         # batch, num_seeds, h, dof
